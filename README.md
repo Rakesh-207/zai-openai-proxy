@@ -6,6 +6,7 @@ A Cloudflare Worker that proxies OpenAI-compatible API requests to Z.AI, allowin
 
 - 🔄 **OpenAI Compatible** - Works with any OpenAI SDK client
 - 🚀 **Default Model** - Uses GLM 4.7 as the default model
+- 🧠 **Coding Plan Optimized** - Uses the dedicated coding endpoint (Thinking enabled by default)
 - 📡 **Streaming Support** - Full support for streaming responses
 - 🌐 **CORS Enabled** - Works from browser applications
 - 🔐 **Secure** - API key stored as Cloudflare secret

@@ -15,7 +15,7 @@ interface Env {
 	ZAI_API_KEY: string;
 }
 
-const ZAI_BASE_URL = 'https://api.z.ai/api/paas/v4';
+const ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 const DEFAULT_MODEL = 'glm-4.7';
 
 export default {
