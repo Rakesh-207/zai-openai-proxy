@@ -80,11 +80,14 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function handleLegacyCompletions(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	console.log('[DEBUG] Legacy completions request received');
+	
 	try {
 		const body = await request.json() as Record<string, unknown>;
+		console.log('[DEBUG] Request body:', JSON.stringify(body));
 
 		const chatRequestBody = {
-			model: body.model,
+			model: body.model || DEFAULT_MODEL,
 			messages: [
 				{ role: 'user', content: body.prompt }
 			],
@@ -101,6 +104,9 @@ async function handleLegacyCompletions(request: Request, env: Env, ctx: Executio
 			}
 		});
 
+		console.log('[DEBUG] Converted to chat format:', JSON.stringify(chatRequestBody));
+		console.log('[DEBUG] Calling ZAI API at:', `${ZAI_BASE_URL}/chat/completions`);
+
 		const zaiResponse = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
 			method: 'POST',
 			headers: {
@@ -110,20 +116,50 @@ async function handleLegacyCompletions(request: Request, env: Env, ctx: Executio
 			body: JSON.stringify(chatRequestBody)
 		});
 
+		console.log('[DEBUG] ZAI response status:', zaiResponse.status);
+		console.log('[DEBUG] ZAI response headers:', Object.fromEntries(zaiResponse.headers.entries()));
+
+		if (!zaiResponse.ok) {
+			const errorText = await zaiResponse.text();
+			console.error('[ERROR] ZAI API error:', zaiResponse.status, errorText);
+			return new Response(
+				JSON.stringify({
+					error: {
+						message: `ZAI API error: ${zaiResponse.status} ${errorText}`,
+						type: 'api_error',
+						param: null,
+						code: zaiResponse.status
+					}
+				}),
+				{
+					status: zaiResponse.status,
+					headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+				}
+			);
+		}
+
 		const zaiData = await zaiResponse.json() as Record<string, unknown>;
+		console.log('[DEBUG] ZAI response data:', JSON.stringify(zaiData));
+
+		if (!zaiData.choices || !Array.isArray(zaiData.choices)) {
+			console.error('[ERROR] Invalid ZAI response - missing or invalid choices:', zaiData);
+			throw new Error('Invalid response from ZAI API');
+		}
 
 		const legacyResponse = {
 			id: (zaiData.id as string) || `cmpl-${Date.now()}`,
 			object: 'text_completion',
 			created: (zaiData.created as number) || Math.floor(Date.now() / 1000),
-			model: (zaiData.model as string) || (body.model as string),
+			model: (zaiData.model as string) || (body.model as string) || DEFAULT_MODEL,
 			choices: (zaiData.choices as Array<Record<string, unknown>>).map(choice => ({
-				index: choice.index,
-				text: (choice.message as Record<string, unknown>)?.content || (choice.text as string) || '',
-				finish_reason: choice.finish_reason
+				index: choice.index as number,
+				text: ((choice.message as Record<string, unknown>)?.content as string) || (choice.text as string) || '',
+				finish_reason: choice.finish_reason as string
 			})),
-			usage: zaiData.usage
+			usage: zaiData.usage as Record<string, unknown>
 		};
+
+		console.log('[DEBUG] Legacy response:', JSON.stringify(legacyResponse));
 
 		return new Response(JSON.stringify(legacyResponse), {
 			status: zaiResponse.status,
@@ -134,11 +170,12 @@ async function handleLegacyCompletions(request: Request, env: Env, ctx: Executio
 		});
 
 	} catch (error) {
-		console.error('Error in legacy completions handler:', error);
+		console.error('[ERROR] Legacy completions error:', error);
+		console.error('[ERROR] Error stack:', error instanceof Error ? error.stack : 'No stack available');
 		return new Response(
 			JSON.stringify({
 				error: {
-					message: 'Internal server error',
+					message: error instanceof Error ? error.message : 'Internal server error',
 					type: 'internal_error',
 					param: null,
 					code: 'internal_error'
