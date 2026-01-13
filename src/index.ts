@@ -38,6 +38,11 @@ export default {
 			});
 		}
 
+		// Legacy completions endpoint (for TaskMaster MCP compatibility)
+		if (url.pathname === '/v1/completions') {
+			return handleLegacyCompletions(request, env, ctx);
+		}
+
 		// Models endpoint
 		if (url.pathname === '/v1/models' || url.pathname === '/models') {
 			return handleModelsEndpoint();
@@ -73,6 +78,79 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
+async function handleLegacyCompletions(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	try {
+		const body = await request.json() as Record<string, unknown>;
+
+		const chatRequestBody = {
+			model: body.model,
+			messages: [
+				{ role: 'user', content: body.prompt }
+			],
+			max_tokens: body.max_tokens,
+			temperature: body.temperature,
+			top_p: body.top_p,
+			frequency_penalty: body.frequency_penalty,
+			presence_penalty: body.presence_penalty
+		};
+
+		Object.keys(chatRequestBody).forEach(key => {
+			if (chatRequestBody[key as keyof typeof chatRequestBody] === undefined) {
+				delete chatRequestBody[key as keyof typeof chatRequestBody];
+			}
+		});
+
+		const zaiResponse = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${env.ZAI_API_KEY}`
+			},
+			body: JSON.stringify(chatRequestBody)
+		});
+
+		const zaiData = await zaiResponse.json() as Record<string, unknown>;
+
+		const legacyResponse = {
+			id: (zaiData.id as string) || `cmpl-${Date.now()}`,
+			object: 'text_completion',
+			created: (zaiData.created as number) || Math.floor(Date.now() / 1000),
+			model: (zaiData.model as string) || (body.model as string),
+			choices: (zaiData.choices as Array<Record<string, unknown>>).map(choice => ({
+				index: choice.index,
+				text: (choice.message as Record<string, unknown>)?.content || (choice.text as string) || '',
+				finish_reason: choice.finish_reason
+			})),
+			usage: zaiData.usage
+		};
+
+		return new Response(JSON.stringify(legacyResponse), {
+			status: zaiResponse.status,
+			headers: {
+				'Content-Type': 'application/json',
+				...corsHeaders()
+			}
+		});
+
+	} catch (error) {
+		console.error('Error in legacy completions handler:', error);
+		return new Response(
+			JSON.stringify({
+				error: {
+					message: 'Internal server error',
+					type: 'internal_error',
+					param: null,
+					code: 'internal_error'
+				}
+			}),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+			}
+		);
+	}
+}
 
 async function proxyRequest(request: Request, env: Env, url: URL): Promise<Response> {
 	// Build the Z.AI URL
